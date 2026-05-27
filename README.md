@@ -91,75 +91,33 @@ kubectl create -f https://raw.githubusercontent.com/ROCm/k8s-device-plugin/maste
 
 # GPU Time-Slicing (Virtual Devices)
 
-GPU time-slicing allows a single physical AMD GPU to be advertised as multiple virtual devices to Kubernetes, enabling multiple pods to share a GPU via OS-level scheduling (time-slicing). This is a Kubernetes-level overcommit — all virtual slices of the same physical GPU share the same `/dev/kfd` and `/dev/dri/renderD*` devices, so pods compete for VRAM and compute at runtime.
+GPU time-slicing allows a single physical AMD GPU to be advertised as multiple virtual devices to Kubernetes, enabling multiple pods to share a GPU via OS-level scheduling. This is a Kubernetes-level overcommit — all virtual slices of the same physical GPU share the same `/dev/kfd` and `/dev/dri/renderD*` devices, so pods compete for VRAM and compute at runtime.
 
-## Configuration
+| Flag / Field | Type | Default | Valid Range | Description |
+|--------------|------|---------|-------------|-------------|
+| `--replicas` | int | `1` | `≥ 1` | Number of virtual device slices per physical GPU |
 
-Add a `gpu.replicas` field to a YAML config file:
+Setting `--replicas=1` (or omitting it) produces behavior identical to the upstream plugin.
 
-```yaml
-gpu:
-  replicas: 4    # Each physical GPU is presented as 4 virtual devices
-```
+## Quick Start
 
-| Field | Type | Default | Valid Range | Description |
-|-------|------|---------|-------------|-------------|
-| `gpu.replicas` | int | `1` | `≥ 1` | Number of virtual device slices per physical GPU |
-
-- **Default**: `1` — produces behavior identical to the upstream plugin (no overcommit)
-- **Validation**: Values `< 1` are rejected at startup with a fatal log message
-
-## Deploying with Time-Slicing
-
-**1. Create a ConfigMap:**
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: amdgpu-device-plugin-config
-  namespace: kube-system
-data:
-  config.yaml: |
-    gpu:
-      replicas: 2
-```
-
-**2. Mount it in the DaemonSet and pass the `--config` flag:**
+Add the `--replicas` flag to the DaemonSet container args:
 
 ```yaml
 containers:
 - image: rocm/k8s-device-plugin
   name: amdgpu-dp-cntr
-  args: ["--config", "/etc/amdgpu/config.yaml"]
-  volumeMounts:
-    - name: dp
-      mountPath: /var/lib/kubelet/device-plugins
-    - name: sys
-      mountPath: /sys
-    - name: config
-      mountPath: /etc/amdgpu
-volumes:
-  - name: dp
-    hostPath:
-      path: /var/lib/kubelet/device-plugins
-  - name: sys
-    hostPath:
-      path: /sys
-  - name: config
-    configMap:
-      name: amdgpu-device-plugin-config
+  args:
+    - "--replicas=4"
 ```
 
-## Expected Behavior
+That's it. A node with 2 physical GPUs will now report `8` under `amd.com/gpu`.
 
-After deploying with `replicas: N`, verify the reported GPU count:
+## Verification
 
 ```bash
 kubectl get nodes -o custom-columns=NAME:.metadata.name,GPU:"status.capacity.amd\.com/gpu"
 ```
-
-A node with 2 physical GPUs and `replicas: 4` will report `8` under `amd.com/gpu`.
 
 Two pods each requesting `amd.com/gpu: 1` can be scheduled on a node with a single physical GPU when `replicas >= 2`.
 
@@ -167,8 +125,6 @@ Two pods each requesting `amd.com/gpu: 1` can be scheduled on a node with a sing
 
 - **No hardware isolation**: All virtual slices share the same physical GPU. Pods compete for VRAM and compute resources at the OS scheduler level.
 - **No MIG equivalent**: Unlike NVIDIA MIG, there is no hardware-level partitioning. Time-slicing provides Kubernetes scheduling flexibility but no performance guarantees.
-- **Omitting replicas or setting it to 1**: Produces behavior identical to the upstream plugin (one device per physical GPU).
-
 
 
 * This plugin uses [`go modules`][gm] for dependencies management
